@@ -2,10 +2,12 @@
 pragma solidity 0.8.28;
 
 import { Test, console } from "forge-std/Test.sol";
-import { IBones } from "../src/interface/IBones.sol";
 import { IERC20, MockERC20 } from "forge-std/mocks/MockERC20.sol";
 
-import { DynamicTrait, INeandersmolTraitsStorage } from "../src/DynamicTrait.sol";
+import { IDynamicTrait, DynamicTrait, INeandersmolTraitsStorage } from "../src/DynamicTrait.sol";
+
+error Unauthorized();
+error ETHTransferFailed();
 
 contract DynamicTraitForkTest is Test {
     DynamicTrait dt;
@@ -27,13 +29,21 @@ contract DynamicTraitForkTest is Test {
     bytes4 constant FIGHTER_HELMET = 0x4cc41ad5;
     bytes4 constant LAND_RULER_CROWN = 0x4d310d8b;
 
+    bytes4 constant BLEACH_CUT = 0xf9b5520c;
+    bytes4 constant NONE_BACKGROUND = 0x00000001;
+    bytes4 constant NONE_HAIR = 0x00000008;
+
     uint256 public constant TRAITS_CONTROLLER_ROLE = uint256(keccak256("TRAITS_CONTROLLER_ROLE"));
+
+    uint256 public constant PRICE = 0.001 ether;
+
+    address constant OWNER = address(0x01);
 
     function setUp() public {
         arbitrumFork = vm.createFork(ARB_RPC_URL);
         vm.selectFork(arbitrumFork);
 
-        dt = new DynamicTrait(BONES, TS);
+        dt = new DynamicTrait(BONES, TS, NEANDERSMOL);
 
         vm.prank(ADMIN);
         IBones(BONES).grantStaking(address(dt));
@@ -41,12 +51,14 @@ contract DynamicTraitForkTest is Test {
         vm.prank(SECOND_ADMIN);
         INeandersmolTraitsStorage(TS).grantRoles(address(dt), TRAITS_CONTROLLER_ROLE);
 
-        dt.setTraitData(FIGHTER_HELMET, 50, _getAddress(), _getPrice(10 ether, 5 * 10 ** 6));
-        dt.setTraitData(TOP_KNOT, 25, _getAddress(), _getPrice(15 ether, 10 * 10 ** 6));
+        dt.setTraitData(FIGHTER_HELMET, 50, PRICE, _getAddress(), _getPrice(10 ether, 5 * 10 ** 6));
+        dt.setTraitData(TOP_KNOT, 25, PRICE, _getAddress(), _getPrice(15 ether, 10 * 10 ** 6));
+        dt.setTraitData(BLEACH_CUT, 25, PRICE, _getAddress(), _getPrice(15 ether, 10 * 10 ** 6));
+        dt.setTraitData(LAND_RULER_CROWN, 25, PRICE, _getAddress(), _getPrice(15 ether, 10 * 10 ** 6));
     }
 
-    function testPurchaseTrait() public {
-        uint256 tokenId = 5521;
+    function testPurchaseTraitWithUSDC() public {
+        deal(BONES, FORK, IERC20(BONES).totalSupply() - 5, true);
         uint256 usdcBalanceBefore = IERC20(USDC).balanceOf(FORK);
         uint256 bonesBalanceBefore = IERC20(BONES).balanceOf(FORK);
 
@@ -54,39 +66,233 @@ contract DynamicTraitForkTest is Test {
         IERC20(BONES).approve(address(dt), type(uint256).max);
         IERC20(USDC).approve(address(dt), type(uint256).max);
 
-        dt.purchaseTrait(FIGHTER_HELMET, tokenId, USDC);
+        bytes4[] memory id = new bytes4[](1);
+        id[0] = 0x1aef0ec5;
 
-        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSelector(IDynamicTrait.TraitDoesNotExist.selector, id[0]));
+
+        dt.purchaseTraits(id, USDC);
+
+        id[0] = FIGHTER_HELMET;
+        dt.purchaseTraits(id, USDC);
 
         uint256 usdcBalanceAfter = IERC20(USDC).balanceOf(FORK);
         uint256 bonesBalanceAfter = IERC20(BONES).balanceOf(FORK);
 
-        uint256 traitUsdcPrice = dt.price(USDC, FIGHTER_HELMET);
+        uint256 traitUsdcPrice = dt.getTraitPrice(USDC, FIGHTER_HELMET);
+        uint256 amountOfTraitLeft =
+            dt.getTraitData(FIGHTER_HELMET).maxSupply - dt.getTraitData(FIGHTER_HELMET).amountPurchased;
 
         assertEq(usdcBalanceAfter, usdcBalanceBefore - traitUsdcPrice);
         assertEq(bonesBalanceAfter, bonesBalanceBefore - 5000 ether);
         assertEq(IERC20(USDC).balanceOf(address(dt)), traitUsdcPrice);
-        assertEq(dt.isOwned(tokenId, FIGHTER_HELMET), true);
+        assertEq(dt.getTraitData(FIGHTER_HELMET).amountPurchased, 1);
+        assertEq(amountOfTraitLeft, 49);
+
+        while (dt.getTraitData(FIGHTER_HELMET).maxSupply > (dt.getTraitData(FIGHTER_HELMET).amountPurchased)) {
+            dt.purchaseTraits(id, USDC);
+        }
+
+        assertEq(dt.getTraitData(FIGHTER_HELMET).amountPurchased, 50);
+
+        vm.expectRevert(abi.encodeWithSelector(IDynamicTrait.MaximumSupplyReached.selector, FIGHTER_HELMET));
+        dt.purchaseTraits(id, USDC);
+
+        bytes4[] memory noneId = new bytes4[](1);
+        noneId[0] = NONE_BACKGROUND;
+
+        vm.expectRevert(IDynamicTrait.InvalidTrait.selector);
+        dt.purchaseTraits(noneId, USDC);
+
+        vm.stopPrank();
+    }
+
+    function testPurchaseTraitWithNativeToken() public {
+        uint256 ethBalanceBefore = FORK.balance;
+        uint256 bonesBalanceBefore = IERC20(BONES).balanceOf(FORK);
+
+        vm.startPrank(FORK);
+
+        IERC20(BONES).approve(address(dt), type(uint256).max);
+
+        bytes4[] memory id = new bytes4[](2);
+        id[0] = FIGHTER_HELMET;
+        id[1] = BLEACH_CUT;
+
+        uint256 price = dt.getTraitData(FIGHTER_HELMET).nativeTokenPrice + dt.getTraitData(BLEACH_CUT).nativeTokenPrice;
+
+        dt.purchaseTraits{ value: price }(id, address(0));
+
+        vm.stopPrank();
+
+        uint256 ethBalanceAfter = FORK.balance;
+        uint256 bonesBalanceAfter = IERC20(BONES).balanceOf(FORK);
+
+        assertEq(ethBalanceAfter, ethBalanceBefore - price);
+        assertEq(bonesBalanceAfter, bonesBalanceBefore - dt.bonesRequired() * id.length);
+        assertEq(address(dt).balance, price);
         assertEq(dt.getTraitData(FIGHTER_HELMET).amountPurchased, 1);
     }
 
-    event S(string);
-
-    function testSetTrait() public {
+    function testAddTrait() public {
         uint256 tokenId = 5521;
         vm.startPrank(FORK);
         IERC20(BONES).approve(address(dt), type(uint256).max);
         IERC20(USDC).approve(address(dt), type(uint256).max);
 
-        dt.purchaseTrait(TOP_KNOT, tokenId, USDC);
+        bytes4[] memory id = new bytes4[](1);
+        id[0] = TOP_KNOT;
+
+        dt.purchaseTraits(id, USDC);
 
         vm.roll(block.number + 1);
 
-        dt.setTrait(tokenId, TOP_KNOT);
+        vm.expectRevert(Unauthorized.selector);
+        dt.manageTrait(2, TOP_KNOT, bytes4(0));
+
+        vm.expectRevert(IDynamicTrait.InsufficientBalance.selector);
+        dt.manageTrait(tokenId, BLEACH_CUT, bytes4(0));
+
+        dt.manageTrait(tokenId, TOP_KNOT, bytes4(0));
+
+        vm.expectRevert(IDynamicTrait.TraitAlreadySet.selector);
+        dt.manageTrait(tokenId, TOP_KNOT, bytes4(0));
+        assertEq(dt.getBalance(FORK, TOP_KNOT), 0);
 
         vm.stopPrank();
 
         assertEq(INeandersmolTraitsStorage(TS).getTokenTraitsTypes(tokenId).hair, TOP_KNOT);
+        assertTrue(dt.isTraitSet(tokenId, TOP_KNOT));
+    }
+
+    function testRemoveTrait() public {
+        uint256 tokenId = 3700;
+        vm.startPrank(FORK);
+        IERC20(BONES).approve(address(dt), type(uint256).max);
+        IERC20(USDC).approve(address(dt), type(uint256).max);
+
+        bytes4[] memory id = new bytes4[](1);
+        id[0] = BLEACH_CUT;
+
+        dt.purchaseTraits(id, USDC);
+
+        vm.roll(block.number + 1);
+
+        dt.manageTrait(tokenId, BLEACH_CUT, bytes4(0)); // 0
+
+        vm.roll(block.number + 2);
+
+        dt.manageTrait(tokenId, bytes4(0), BLEACH_CUT); // 1
+
+        vm.expectRevert(IDynamicTrait.NoneTraitAlreadySet.selector);
+        dt.manageTrait(tokenId, bytes4(0), BLEACH_CUT);
+
+        vm.stopPrank();
+
+        assertEq(dt.getBalance(FORK, BLEACH_CUT), 1); // 1
+
+        assertEq(INeandersmolTraitsStorage(TS).getTokenTraitsTypes(tokenId).hair, NONE_HAIR);
+        assertFalse(dt.isTraitSet(tokenId, BLEACH_CUT));
+    }
+
+    function testSwapTrait() public {
+        uint256 tokenId = 3700;
+        vm.startPrank(FORK);
+        IERC20(BONES).approve(address(dt), type(uint256).max);
+        IERC20(USDC).approve(address(dt), type(uint256).max);
+
+        bytes4[] memory id = new bytes4[](2);
+        id[0] = TOP_KNOT;
+        id[1] = BLEACH_CUT;
+
+        dt.purchaseTraits(id, USDC);
+
+        vm.roll(block.number + 1);
+
+        dt.manageTrait(tokenId, TOP_KNOT, bytes4(0)); // -1
+
+        vm.roll(block.number + 2);
+
+        dt.manageTrait(tokenId, BLEACH_CUT, TOP_KNOT); // + 1
+
+        vm.stopPrank();
+
+        assertEq(dt.getBalance(FORK, TOP_KNOT), 1);
+        assertEq(dt.getBalance(FORK, BLEACH_CUT), 0);
+        assertEq(INeandersmolTraitsStorage(TS).getTokenTraitsTypes(tokenId).hair, BLEACH_CUT);
+        assertTrue(dt.isTraitSet(tokenId, BLEACH_CUT));
+        assertFalse(dt.isTraitSet(tokenId, TOP_KNOT));
+    }
+
+    function testWithdrawTokens() public {
+        dt.setAmountOfBonesRequired(6000 ether);
+        vm.startPrank(FORK);
+        IERC20(BONES).approve(address(dt), type(uint256).max);
+        IERC20(USDC).approve(address(dt), type(uint256).max);
+
+        bytes4[] memory ids = new bytes4[](2);
+        ids[0] = TOP_KNOT;
+        ids[1] = BLEACH_CUT;
+        dt.purchaseTraits(ids, USDC);
+
+        vm.stopPrank();
+        address[] memory tokens = new address[](1);
+        tokens[0] = USDC;
+
+        dt.withdrawToken(tokens);
+
+        assertEq(
+            IERC20(USDC).balanceOf(address(this)), dt.getTraitPrice(USDC, TOP_KNOT) + dt.getTraitPrice(USDC, BLEACH_CUT)
+        );
+
+        IERC20(BONES).approve(address(dt), type(uint256).max);
+        IERC20(USDC).approve(address(dt), type(uint256).max);
+
+        bytes4[] memory id = new bytes4[](1);
+        id[0] = TOP_KNOT;
+
+        vm.prank(FORK);
+        dt.purchaseTraits{ value: PRICE }(id, USDC);
+
+        vm.expectRevert(ETHTransferFailed.selector);
+        dt.withdrawToken(tokens);
+
+        dt.transferOwnership(OWNER);
+
+        vm.prank(OWNER);
+        dt.withdrawToken(tokens);
+    }
+
+    function testManageBulkTraits() public {
+        uint256 tokenId = 5521;
+        vm.startPrank(FORK);
+        IERC20(BONES).approve(address(dt), type(uint256).max);
+        IERC20(USDC).approve(address(dt), type(uint256).max);
+        bytes4[] memory newTraitIds = new bytes4[](4);
+        newTraitIds[0] = TOP_KNOT;
+        newTraitIds[1] = BLEACH_CUT;
+        newTraitIds[2] = LAND_RULER_CROWN;
+        newTraitIds[3] = FIGHTER_HELMET;
+
+        bytes4[] memory oldTraitIds = new bytes4[](newTraitIds.length);
+        oldTraitIds[0] = 0x000000;
+        oldTraitIds[1] = 0x000000;
+        oldTraitIds[2] = 0x000000;
+        oldTraitIds[3] = 0x000000;
+
+        dt.purchaseTraits(newTraitIds, USDC);
+
+        vm.expectRevert(IDynamicTrait.LengthsAreNotEqual.selector);
+        dt.manageTraits(tokenId, newTraitIds, new bytes4[](0));
+
+        vm.expectRevert(Unauthorized.selector);
+        dt.manageTraits(504, newTraitIds, oldTraitIds);
+
+        dt.manageTraits(tokenId, newTraitIds, oldTraitIds);
+
+        vm.stopPrank();
+
+        assertEq(INeandersmolTraitsStorage(TS).getTokenTraitsTypes(tokenId).hair, BLEACH_CUT);
     }
 
     function testState() public view {
@@ -109,6 +315,6 @@ contract DynamicTraitForkTest is Test {
     }
 }
 
-interface INeandersmol {
-    function tokenURI(uint256 _tokenId) external view returns (string memory);
+interface IBones {
+    function grantStaking(address _contract) external;
 }
