@@ -8,6 +8,11 @@ interface IDynamicTrait {
     error LengthsAreNotEqual();
 
     /**
+     *  @dev Thrown when the provided price is lower than the required minimum.
+     */
+    error PriceTooLow();
+
+    /**
      * @dev Thrown when an external contract call fails.
      */
     error CallFailed();
@@ -16,6 +21,11 @@ interface IDynamicTrait {
      * @dev Thrown when trying to set a trait to the same ID as the existing one.
      */
     error SameTraitId();
+
+    /**
+     * @dev This error helps avoid returning invalid or zero traits.s
+     */
+    error TraitNotSet();
 
     /**
      * @dev Thrown when an invalid trait is used.
@@ -117,13 +127,15 @@ interface IDynamicTrait {
      * @param _oldTraitId The existing trait ID being replaced or removed.
      */
     function manageTrait(uint256 _tokenId, bytes4 _newTraitId, bytes4 _oldTraitId) external;
-    /**
-     * @dev Emitted when a trait is set for a token.
-     * @param tokenId The ID of the NFT that received the trait.
-     * @param traitId The ID of the trait that was set.
-     */
 
-    event TraitSet(uint256 indexed tokenId, bytes4 indexed traitId);
+    /**
+     * @notice Emitted when a trait is updated for an NFT.
+     * @dev This event is triggered when a new trait is set, swapped, or removed for a token.
+     * @param owner The address of the NFT owner who modified the trait.
+     * @param oldTraitId The ID of the trait being replaced or removed (if applicable).
+     * @param newTraitId The ID of the newly assigned trait (or `bytes4(0)` if removed).
+     */
+    event TraitChanged(address indexed owner, bytes4 indexed oldTraitId, bytes4 indexed newTraitId);
 
     /**
      * @dev Emitted when a trait is purchased.
@@ -138,5 +150,12 @@ interface IDynamicTrait {
      * @param traitId The ID of the trait whose price is being updated.
      * @param price The new price of the trait.
      */
-    event PriceSet(address indexed paymentToken, bytes4 indexed traitId, uint256 indexed price);
+    event PriceSet(bytes4 indexed traitId, address indexed paymentToken, uint256 indexed price);
+
+    /**
+     * @dev Emitted when the native token price for a specific trait is updated.
+     * @param traitId The unique identifier of the trait.
+     * @param nativeTokenPrice The new price of the trait in native tokens.
+     */
+    event NativeTokenPriceUpdated(bytes4 indexed traitId, uint256 indexed nativeTokenPrice);
 }

@@ -2,13 +2,24 @@
 pragma solidity 0.8.28;
 
 import { LibString } from "solady/utils/LibString.sol";
-import { INeandersmolTraitsStorage } from "../interface/INeandersmolTraitsStorage.sol";
+import { INeandersmolTraitsStorage, Neander } from "../interface/INeandersmolTraitsStorage.sol";
 
 /**
- * @title TraitSelectorLib
- * @dev Library for handling trait selection and retrieval in the Neandersmol ecosystem.
+ * @title TraitManagerLib
+ * @dev This library provides utility functions for managing and retrieving traits
+ *      in the Neandersmol ecosystem. It allows for selecting, setting, and handling
+ *      default trait values efficiently.
+ *
+ * @notice Used by the `DynamicTrait` contract to manage trait assignments, retrieval,
+ *         and storage interactions.
+ *
+ * @dev The library includes:
+ *      - Retrieving function selectors for trait setting.
+ *      - Mapping trait types to their respective "None" trait IDs.
+ *      - Fetching the default trait assigned to a token.
+ *
  */
-library TraitSelectorLib {
+library TraitManagerLib {
     using LibString for string;
 
     string constant BACKGROUND = "Background";
@@ -130,6 +141,55 @@ library TraitSelectorLib {
         }
         if (_traitType.eq(SPECIAL)) {
             traitId = NONE_SPECIAL;
+        }
+    }
+
+    function getDefaultTrait(INeandersmolTraitsStorage _ts, uint256 _tokenId, bytes4 _traitId)
+        internal
+        view
+        returns (bytes4 traitId)
+    {
+        string memory traitType = _ts.getTrait(_traitId).traitType;
+        Neander memory neander = _ts.getTokenTraitsTypes(_tokenId);
+
+        if (traitType.eq(BACKGROUND)) {
+            traitId = neander.background;
+        }
+        if (traitType.eq(SKY)) {
+            traitId = neander.sky;
+        }
+        if (traitType.eq(LAND)) {
+            traitId = neander.land;
+        }
+        if (traitType.eq(NEANDERSMOL)) {
+            traitId = neander.neandersmol;
+        }
+        if (traitType.eq(SKIN)) {
+            traitId = neander.skin;
+        }
+        if (traitType.eq(TOP)) {
+            traitId = neander.jewelry;
+        }
+        if (traitType.eq(JEWELRY)) {
+            traitId = neander.jewelry;
+        }
+        if (traitType.eq(FACE)) {
+            traitId = neander.face;
+        }
+        if (traitType.eq(HAIR)) {
+            traitId = neander.hair;
+        }
+        if (traitType.eq(HAT)) {
+            traitId = neander.hat;
+        }
+        if (traitType.eq(HAND)) {
+            traitId = neander.hand;
+        }
+        if (traitType.eq(MASK)) {
+            traitId = neander.mask;
+        }
+        if (traitType.eq(SPECIAL)) {
+            traitId = neander.special;
         }
     }
 }
